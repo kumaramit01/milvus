@@ -396,6 +396,8 @@ func ParseBoostMode(s string) (planpb.BoostMode, error) {
 		return planpb.BoostMode_BoostModeMultiply, nil
 	case "sum":
 		return planpb.BoostMode_BoostModeSum, nil
+	case "custom":
+		return planpb.BoostMode_BoostModeCustom, nil
 	default:
 		return 0, merr.WrapErrParameterInvalidMsg("unknown boost mode: %s", s)
 	}
@@ -438,6 +440,15 @@ func CreateSearchScorers(schema *typeutil.SchemaHelper, functionScore *schemapb.
 			return nil, nil, err
 		}
 		option.BoostMode = boostMode
+
+		// If custom boost mode, parse and validate the custom expression
+		if boostMode == planpb.BoostMode_BoostModeCustom {
+			customExpr, ok := funcutil.TryGetAttrByKeyFromRepeatedKV(BoostCustomExprKey, functionScore.GetParams())
+			if !ok || customExpr == "" {
+				return nil, nil, merr.WrapErrParameterInvalidMsg("custom boost mode requires '%s' parameter", BoostCustomExprKey)
+			}
+			option.CustomBoostExpr = customExpr
+		}
 	}
 
 	s, ok = funcutil.TryGetAttrByKeyFromRepeatedKV(BoostFunctionModeKey, functionScore.GetParams())

@@ -20,6 +20,7 @@
 #include "log/Log.h"
 #include "monitor/Monitor.h"
 #include "pb/plan.pb.h"
+#include "rescores/CustomBoostExprEvaluator.h"
 
 namespace milvus::exec {
 
@@ -161,8 +162,30 @@ PhyRescoresNode::GetOutput() {
                         boost_scores[i].value();
                 }
             }
-
             break;
+        case proto::plan::BoostModeCustom: {
+            std::string custom_expr = option_->custom_boost_expr();
+            if (custom_expr.empty()) {
+                ThrowInfo(ErrorCode::UnexpectedError,
+                          "custom boost mode requires boost_expr parameter");
+            }
+            try {
+                rescores::CustomBoostExprEvaluator evaluator(custom_expr);
+                for (auto i = 0; i < offsets.size(); i++) {
+                    if (boost_scores[i].has_value()) {
+                        float original_score = search_result.distances_[offset_idx[i]];
+                        float boost_score = boost_scores[i].value();
+                        float final_score = evaluator.evaluate(original_score, boost_score);
+                        search_result.distances_[offset_idx[i]] = final_score;
+                    }
+                }
+            } catch (const std::exception& e) {
+                ThrowInfo(ErrorCode::UnexpectedError,
+                          fmt::format("Failed to evaluate custom boost expression '{}': {}",
+                                      custom_expr, e.what()));
+            }
+            break;
+        }
         default:
             ThrowInfo(ErrorCode::UnexpectedError,
                       fmt::format("unknown boost boost mode: {}", boost_mode));

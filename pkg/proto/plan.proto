@@ -317,6 +317,7 @@ enum FunctionMode{
 enum BoostMode{
   BoostModeMultiply = 0;
   BoostModeSum = 1;
+  BoostModeCustom = 2;
 };
 
 message ScoreFunction {
@@ -329,6 +330,7 @@ message ScoreFunction {
 message ScoreOption{
   BoostMode boost_mode = 1;
   FunctionMode function_mode = 2;
+  string custom_boost_expr = 3;
 }
 
 message PlanOption {

@@ -1682,6 +1682,136 @@ func Test_SegmentScorers(t *testing.T) {
 	})
 }
 
+func TestCustomBoostMode(t *testing.T) {
+	schema := newTestSchemaHelper(t)
+
+	makeBoostRanker := func(filter string, weight string) *schemapb.FunctionSchema {
+		params := []*commonpb.KeyValuePair{
+			{Key: rerank.WeightKey, Value: weight},
+			{Key: "reranker", Value: rerank.BoostName},
+		}
+		if filter != "" {
+			params = append(params, &commonpb.KeyValuePair{Key: rerank.FilterKey, Value: filter})
+		}
+		return &schemapb.FunctionSchema{
+			Params: params,
+		}
+	}
+
+	t.Run("ok - custom boost mode with expression", func(t *testing.T) {
+		fs := &schemapb.FunctionScore{
+			Functions: []*schemapb.FunctionSchema{
+				makeBoostRanker("Int64Field > 0", "1.5"),
+			},
+			Params: []*commonpb.KeyValuePair{
+				{Key: BoostModeKey, Value: "custom"},
+				{Key: BoostCustomExprKey, Value: "original_score * 0.7 + boost_score * 0.3"},
+			},
+		}
+		plan, err := CreateSearchPlan(schema, "", "FloatVectorField", &planpb.QueryInfo{GroupByFieldId: -1}, nil, fs)
+		assert.NoError(t, err)
+		assert.NotNil(t, plan)
+		assert.NotNil(t, plan.ScoreOption)
+		assert.Equal(t, planpb.BoostMode_BoostModeCustom, plan.ScoreOption.BoostMode)
+		assert.Equal(t, "original_score * 0.7 + boost_score * 0.3", plan.ScoreOption.CustomBoostExpr)
+	})
+
+	t.Run("ok - custom boost with conditional expression", func(t *testing.T) {
+		fs := &schemapb.FunctionScore{
+			Functions: []*schemapb.FunctionSchema{
+				makeBoostRanker("", "2.0"),
+			},
+			Params: []*commonpb.KeyValuePair{
+				{Key: BoostModeKey, Value: "custom"},
+				{Key: BoostCustomExprKey, Value: "original_score > 0.5 ? original_score * boost_score : original_score"},
+			},
+		}
+		plan, err := CreateSearchPlan(schema, "", "FloatVectorField", &planpb.QueryInfo{GroupByFieldId: -1}, nil, fs)
+		assert.NoError(t, err)
+		assert.NotNil(t, plan)
+		assert.Equal(t, planpb.BoostMode_BoostModeCustom, plan.ScoreOption.BoostMode)
+		assert.Equal(t, "original_score > 0.5 ? original_score * boost_score : original_score", plan.ScoreOption.CustomBoostExpr)
+	})
+
+	t.Run("ok - custom boost with math functions", func(t *testing.T) {
+		fs := &schemapb.FunctionScore{
+			Functions: []*schemapb.FunctionSchema{
+				makeBoostRanker("", "1.0"),
+			},
+			Params: []*commonpb.KeyValuePair{
+				{Key: BoostModeKey, Value: "custom"},
+				{Key: BoostCustomExprKey, Value: "min(original_score + boost_score, 1.0)"},
+			},
+		}
+		plan, err := CreateSearchPlan(schema, "", "FloatVectorField", &planpb.QueryInfo{GroupByFieldId: -1}, nil, fs)
+		assert.NoError(t, err)
+		assert.NotNil(t, plan)
+		assert.Equal(t, planpb.BoostMode_BoostModeCustom, plan.ScoreOption.BoostMode)
+	})
+
+	t.Run("error - custom boost without expression", func(t *testing.T) {
+		fs := &schemapb.FunctionScore{
+			Functions: []*schemapb.FunctionSchema{
+				makeBoostRanker("", "1.0"),
+			},
+			Params: []*commonpb.KeyValuePair{
+				{Key: BoostModeKey, Value: "custom"},
+				// Missing boost_expr
+			},
+		}
+		_, err := CreateSearchPlan(schema, "", "FloatVectorField", &planpb.QueryInfo{GroupByFieldId: -1}, nil, fs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "custom boost mode requires")
+	})
+
+	t.Run("error - custom boost with empty expression", func(t *testing.T) {
+		fs := &schemapb.FunctionScore{
+			Functions: []*schemapb.FunctionSchema{
+				makeBoostRanker("", "1.0"),
+			},
+			Params: []*commonpb.KeyValuePair{
+				{Key: BoostModeKey, Value: "custom"},
+				{Key: BoostCustomExprKey, Value: ""}, // Empty expression
+			},
+		}
+		_, err := CreateSearchPlan(schema, "", "FloatVectorField", &planpb.QueryInfo{GroupByFieldId: -1}, nil, fs)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "custom boost mode requires")
+	})
+
+	t.Run("ok - multiply boost mode doesn't require expression", func(t *testing.T) {
+		fs := &schemapb.FunctionScore{
+			Functions: []*schemapb.FunctionSchema{
+				makeBoostRanker("", "1.0"),
+			},
+			Params: []*commonpb.KeyValuePair{
+				{Key: BoostModeKey, Value: "multiply"},
+			},
+		}
+		plan, err := CreateSearchPlan(schema, "", "FloatVectorField", &planpb.QueryInfo{GroupByFieldId: -1}, nil, fs)
+		assert.NoError(t, err)
+		assert.NotNil(t, plan)
+		assert.Equal(t, planpb.BoostMode_BoostModeMultiply, plan.ScoreOption.BoostMode)
+		assert.Empty(t, plan.ScoreOption.CustomBoostExpr)
+	})
+
+	t.Run("ok - sum boost mode doesn't require expression", func(t *testing.T) {
+		fs := &schemapb.FunctionScore{
+			Functions: []*schemapb.FunctionSchema{
+				makeBoostRanker("", "1.0"),
+			},
+			Params: []*commonpb.KeyValuePair{
+				{Key: BoostModeKey, Value: "sum"},
+			},
+		}
+		plan, err := CreateSearchPlan(schema, "", "FloatVectorField", &planpb.QueryInfo{GroupByFieldId: -1}, nil, fs)
+		assert.NoError(t, err)
+		assert.NotNil(t, plan)
+		assert.Equal(t, planpb.BoostMode_BoostModeSum, plan.ScoreOption.BoostMode)
+		assert.Empty(t, plan.ScoreOption.CustomBoostExpr)
+	})
+}
+
 func TestConcurrency(t *testing.T) {
 	schemaHelper := newTestSchemaHelper(t)
 

@@ -52,6 +52,7 @@ set(MILVUS_TEST_FILES
         test_group_by_json.cpp
         test_rtree_index_wrapper.cpp
         test_rtree_index.cpp
+        test_custom_boost_expr.cpp
         )
 
 if ( NOT (INDEX_ENGINE STREQUAL "cardinal") )

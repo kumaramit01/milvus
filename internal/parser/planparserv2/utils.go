@@ -22,6 +22,7 @@ const (
 	BoostRandomScoreKey    = "random_score"
 	BoostModeKey           = "boost_mode"
 	BoostFunctionModeKey   = "function_mode"
+	BoostCustomExprKey     = "boost_expr"
 	RandomScoreSeedKey     = "seed"
 	RandomScoreFileNameKey = "field"
 	RandomScoreFileIdKey   = "field_id"
