@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
 )
@@ -87,6 +88,19 @@ func (f *Function) WithParam(key string, value any) *Function {
 		f.Params[key] = fmt.Sprintf("%v", value)
 	}
 	return f
+}
+
+// ValidateParams validates function parameters for consistency
+func (f *Function) ValidateParams() error {
+	// Check if custom boost mode requires boost_expr parameter
+	if boostMode, exists := f.Params["boost_mode"]; exists {
+		if strings.ToLower(boostMode) == "custom" {
+			if boostExpr, hasExpr := f.Params["boost_expr"]; !hasExpr || strings.TrimSpace(boostExpr) == "" {
+				return fmt.Errorf("custom boost mode requires 'boost_expr' parameter")
+			}
+		}
+	}
+	return nil
 }
 
 // ProtoMessage returns corresponding schemapb.FunctionSchema

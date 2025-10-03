@@ -152,6 +152,10 @@ func (r *AnnRequest) searchRequest() (*milvuspb.SearchRequest, error) {
 	if len(r.functionRerankers) > 0 {
 		request.FunctionScore = &schemapb.FunctionScore{}
 		for _, fr := range r.functionRerankers {
+			// Validate function parameters before adding to request
+			if err := fr.ValidateParams(); err != nil {
+				return nil, err
+			}
 			request.FunctionScore.Functions = append(request.FunctionScore.Functions, fr.ProtoMessage())
 		}
 	}
@@ -544,6 +548,10 @@ func (opt *hybridSearchOption) HybridRequest() (*milvuspb.HybridSearchRequest, e
 	if len(opt.functionRerankers) > 0 {
 		r.FunctionScore = &schemapb.FunctionScore{}
 		for _, fr := range opt.functionRerankers {
+			// Validate function parameters before adding to request
+			if err := fr.ValidateParams(); err != nil {
+				return nil, err
+			}
 			r.FunctionScore.Functions = append(r.FunctionScore.Functions, fr.ProtoMessage())
 		}
 	}
