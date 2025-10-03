@@ -1,26 +1,9 @@
-/*
- * # Licensed to the LF AI & Data foundation under one
- * # or more contributor license agreements. See the NOTICE file
- * # distributed with this work for additional information
- * # regarding copyright ownership. The ASF licenses this file
- * # to you under the Apache License, Version 2.0 (the
- * # "License"); you may not use this file except in compliance
- * # with the License. You may obtain a copy of the License at
- * #
- * #     http://www.apache.org/licenses/LICENSE-2.0
- * #
- * # Unless required by applicable law or agreed to in writing, software
- * # distributed under the License is distributed on an "AS IS" BASIS,
- * # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * # See the License for the specific language governing permissions and
- * # limitations under the License.
- */
-
 package rerank
 
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/expr-lang/expr"
@@ -43,6 +26,70 @@ const (
 	ExprCodeKey      = "expr_code"
 	ExprNormalizeKey = "normalize"
 )
+
+// toFloat64 converts various numeric types to float64
+func toFloat64(v interface{}) float64 {
+	switch val := v.(type) {
+	case float64:
+		return val
+	case float32:
+		return float64(val)
+	case int:
+		return float64(val)
+	case int32:
+		return float64(val)
+	case int64:
+		return float64(val)
+	default:
+		return 0.0 // fallback for unsupported types
+	}
+}
+
+// mathFunctions contains all mathematical functions for expr-lang
+// Created once at package level to avoid recreating functions on every call
+var mathFunctions = map[string]interface{}{
+	// Basic math functions with type conversion
+	"abs":   func(x interface{}) float64 { return math.Abs(toFloat64(x)) },
+	"ceil":  func(x interface{}) float64 { return math.Ceil(toFloat64(x)) },
+	"floor": func(x interface{}) float64 { return math.Floor(toFloat64(x)) },
+	"round": func(x interface{}) float64 { return math.Round(toFloat64(x)) },
+	"sqrt":  func(x interface{}) float64 { return math.Sqrt(toFloat64(x)) },
+	"pow":   func(x, y interface{}) float64 { return math.Pow(toFloat64(x), toFloat64(y)) },
+
+	// Exponential and logarithmic functions with type conversion
+	"exp":   func(x interface{}) float64 { return math.Exp(toFloat64(x)) },
+	"exp2":  func(x interface{}) float64 { return math.Exp2(toFloat64(x)) },
+	"log":   func(x interface{}) float64 { return math.Log(toFloat64(x)) },
+	"log10": func(x interface{}) float64 { return math.Log10(toFloat64(x)) },
+	"log2":  func(x interface{}) float64 { return math.Log2(toFloat64(x)) },
+
+	// Min/Max functions with type conversion
+	"min": func(x, y interface{}) float64 { return math.Min(toFloat64(x), toFloat64(y)) },
+	"max": func(x, y interface{}) float64 { return math.Max(toFloat64(x), toFloat64(y)) },
+
+	// Utility functions with type conversion
+	"mod":       func(x, y interface{}) float64 { return math.Mod(toFloat64(x), toFloat64(y)) },
+	"remainder": func(x, y interface{}) float64 { return math.Remainder(toFloat64(x), toFloat64(y)) },
+	"trunc":     func(x interface{}) float64 { return math.Trunc(toFloat64(x)) },
+
+	// Clamping function with type conversion
+	"clamp": func(x, min_val, max_val interface{}) float64 {
+		xf := toFloat64(x)
+		minf := toFloat64(min_val)
+		maxf := toFloat64(max_val)
+		if xf < minf {
+			return minf
+		}
+		if xf > maxf {
+			return maxf
+		}
+		return xf
+	},
+
+	// Mathematical constants
+	"PI": math.Pi,
+	"E":  math.E,
+}
 
 func newExprRerank(collSchema *schemapb.CollectionSchema, funcSchema *schemapb.FunctionSchema) (Reranker, error) {
 	base, err := newRerankBase(collSchema, funcSchema, ExprRerankName, false)
@@ -70,12 +117,21 @@ func newExprRerank(collSchema *schemapb.CollectionSchema, funcSchema *schemapb.F
 		return nil, fmt.Errorf("expr rerank requires %s parameter", ExprCodeKey)
 	}
 
+	// Create environment with mathematical functions
+	// Pre-size map to avoid growth during insertion: 3 core variables + len(mathFunctions)
+	env := make(map[string]interface{}, 3+len(mathFunctions))
+
+	env["score"] = float32(0)
+	env["rank"] = int(0)
+	env["fields"] = map[string]interface{}{}
+
+	// Add mathematical functions to the environment (just copying references)
+	for name, fn := range mathFunctions {
+		env[name] = fn
+	}
+
 	// Compile the expression
-	program, err := expr.Compile(exprCode, expr.Env(map[string]interface{}{
-		"score":  float32(0),
-		"rank":   int(0),
-		"fields": map[string]interface{}{},
-	}))
+	program, err := expr.Compile(exprCode, expr.Env(env))
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile expression: %w", err)
 	}
@@ -95,7 +151,6 @@ func newExprRerank(collSchema *schemapb.CollectionSchema, funcSchema *schemapb.F
 		needNormalize: needNormalize,
 	}, nil
 }
-
 func (e *ExprRerank[T]) processOneSearchData(ctx context.Context, searchParams *SearchParams, cols []*columns, idGroup map[any]any) (*IDScores[T], error) {
 	newScores := map[T]float32{}
 	idLocations := make(map[T]IDLoc)
@@ -113,14 +168,21 @@ func (e *ExprRerank[T]) processOneSearchData(ctx context.Context, searchParams *
 				continue // Already processed (use first occurrence)
 			}
 
-			// Prepare environment for expression evaluation
-			env := map[string]interface{}{
-				"score": scores[idx],
-				"rank":  idx,
+			// Prepare environment with dynamic values and math functions
+			// Pre-size map to avoid growth during insertion: 3 core variables + len(mathFunctions)
+			env := make(map[string]interface{}, 3+len(mathFunctions))
+
+			env["score"] = scores[idx]
+			env["rank"] = idx
+
+			// Add mathematical functions to the runtime environment (just copying references)
+			for name, fn := range mathFunctions {
+				env[name] = fn
 			}
 
 			// Add field values to environment
-			fields := make(map[string]interface{})
+			// Pre-size fields map for typical field count
+			fields := make(map[string]interface{}, len(e.inputFieldNames))
 			for fieldIdx, fieldName := range e.inputFieldNames {
 				if fieldIdx < len(col.data) {
 					switch data := col.data[fieldIdx].(type) {
@@ -159,13 +221,13 @@ func (e *ExprRerank[T]) processOneSearchData(ctx context.Context, searchParams *
 				return nil, fmt.Errorf("failed to execute expression for id %v: %w", id, err)
 			}
 
-			// Convert output to float32
+			// Convert output to float32 (fast path for common types)
 			var newScore float32
 			switch v := output.(type) {
-			case float32:
-				newScore = v
 			case float64:
 				newScore = float32(v)
+			case float32:
+				newScore = v
 			case int:
 				newScore = float32(v)
 			case int64:
