@@ -15,6 +15,10 @@ GOPATH	:= $(shell $(GO) env GOPATH)
 SHELL 	:= /bin/bash
 OBJPREFIX := "github.com/milvus-io/milvus/cmd/milvus"
 MILVUS_GO_BUILD_TAGS := "dynamic,sonic,with_jemalloc"
+ 
+# Always use CMake 3.26.5 for this project
+CMAKE_326_BIN := $(HOME)/.local/cmake-3.26.5-macos-universal/CMake.app/Contents/bin
+export PATH := $(CMAKE_326_BIN):$(PATH)
 
 INSTALL_PATH := $(PWD)/bin
 LIBRARY_PATH := $(PWD)/lib
