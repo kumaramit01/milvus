@@ -29,6 +29,7 @@ import (
 	"github.com/milvus-io/milvus/internal/querynodev2/delegator"
 	"github.com/milvus-io/milvus/internal/querynodev2/segments"
 	"github.com/milvus-io/milvus/internal/querynodev2/tasks"
+	"github.com/milvus-io/milvus/internal/util/function/rerank"
 	"github.com/milvus-io/milvus/internal/util/reduce"
 	"github.com/milvus-io/milvus/internal/util/streamrpc"
 	"github.com/milvus-io/milvus/pkg/v2/log"
@@ -437,6 +438,26 @@ func (node *QueryNode) searchChannel(ctx context.Context, req *querypb.SearchReq
 			WithGroupSize(req.GetReq().GetGroupSize()).WithAdvance(req.GetReq().GetIsAdvanced()))
 	if err != nil {
 		return nil, err
+	}
+
+	// Apply expression-based reranking if specified
+	if req.GetReq().GetRerankFunction() != nil {
+		collection := node.manager.Collection.Get(req.GetReq().GetCollectionID())
+		if collection != nil {
+			rerankedResp, rerankErr := rerank.ApplySegmentLevelRerank(
+				ctx,
+				resp,
+				collection.Schema(),
+				req.GetReq().GetRerankFunction(),
+			)
+			if rerankErr != nil {
+				log.Warn("failed to apply segment-level reranking", zap.Error(rerankErr))
+				// Don't fail the query, just skip reranking
+			} else {
+				resp = rerankedResp
+				log.Debug("applied segment-level reranking")
+			}
+		}
 	}
 
 	tr.CtxElapse(ctx, fmt.Sprintf("do search with channel done , vChannel = %s, segmentIDs = %v",
