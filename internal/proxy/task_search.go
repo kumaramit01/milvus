@@ -99,6 +99,10 @@ type searchTask struct {
 	userRequestedPkFieldExplicitly bool
 
 	storageCost segcore.StorageCost
+
+	// cache for QueryNode-level reranker input field IDs
+	qnRerankInputIDs       []int64
+	qnRerankInputIDsCached bool
 }
 
 func (t *searchTask) CanSkipAllocTimestamp() bool {
@@ -397,6 +401,9 @@ func (t *searchTask) initAdvancedSearchRequest(ctx context.Context) error {
 		return err
 	}
 
+	// Collect input field IDs required by QueryNode-level rerankers (expr/wasm) with caching
+	qnInputIDs := t.getQNRerankInputIDs()
+
 	switch strings.ToLower(paramtable.Get().CommonCfg.HybridSearchRequeryPolicy.GetValue()) {
 	case "always":
 		t.needRequery = true
@@ -474,7 +481,12 @@ func (t *searchTask) initAdvancedSearchRequest(ctx context.Context) error {
 		}
 
 		if t.needRequery {
-			plan.OutputFieldIds = t.functionScore.GetAllInputFieldIDs()
+			// We must include:
+			// - Proxy-level reranker inputs (from FunctionScore)
+			// - QueryNode-level reranker inputs (qnInputIDs) so QN can run its reranker
+			allFieldIDs := typeutil.NewSet(t.functionScore.GetAllInputFieldIDs()...)
+			allFieldIDs.Insert(qnInputIDs...)
+			plan.OutputFieldIds = allFieldIDs.Collect()
 		} else {
 			primaryFieldSchema, err := t.schema.GetPkField()
 			if err != nil {
@@ -482,6 +494,7 @@ func (t *searchTask) initAdvancedSearchRequest(ctx context.Context) error {
 			}
 			allFieldIDs := typeutil.NewSet(t.SearchRequest.OutputFieldsId...)
 			allFieldIDs.Insert(t.functionScore.GetAllInputFieldIDs()...)
+			allFieldIDs.Insert(qnInputIDs...)
 			allFieldIDs.Insert(primaryFieldSchema.FieldID)
 			plan.OutputFieldIds = allFieldIDs.Collect()
 			plan.DynamicFields = t.userDynamicFields
@@ -560,6 +573,9 @@ func (t *searchTask) initSearchRequest(ctx context.Context) error {
 		}
 	}
 
+	// Collect input field IDs required by QueryNode-level rerankers (expr/wasm) with caching
+	qnInputIDs := t.getQNRerankInputIDs()
+
 	t.isIterator = isIterator
 	t.SearchRequest.Offset = offset
 	t.SearchRequest.FieldId = queryInfo.GetQueryFieldId()
@@ -585,14 +601,22 @@ func (t *searchTask) initSearchRequest(ctx context.Context) error {
 	})
 	t.needRequery = len(vectorOutputFields) > 0
 	if t.needRequery {
-		plan.OutputFieldIds = t.functionScore.GetAllInputFieldIDs()
+		// Include proxy-level reranker inputs plus QN reranker inputs
+		allFieldIDs := typeutil.NewSet(t.functionScore.GetAllInputFieldIDs()...)
+		allFieldIDs.Insert(qnInputIDs...)
+		plan.OutputFieldIds = allFieldIDs.Collect()
 	} else {
 		primaryFieldSchema, err := t.schema.GetPkField()
 		if err != nil {
 			return err
 		}
+		// In non-requery path, search needs to fetch:
+		// - user requested outputs, pk
+		// - proxy-level reranker inputs
+		// - QueryNode reranker inputs (qnInputIDs) so QN reranker has required fields
 		allFieldIDs := typeutil.NewSet[int64](t.SearchRequest.OutputFieldsId...)
 		allFieldIDs.Insert(t.functionScore.GetAllInputFieldIDs()...)
+		allFieldIDs.Insert(qnInputIDs...)
 		allFieldIDs.Insert(primaryFieldSchema.FieldID)
 		plan.OutputFieldIds = allFieldIDs.Collect()
 		plan.DynamicFields = t.userDynamicFields
@@ -911,7 +935,7 @@ func (t *searchTask) searchShard(ctx context.Context, nodeID int64, qn types.Que
 	searchReq := typeutil.Clone(t.SearchRequest)
 	searchReq.GetBase().TargetID = nodeID
 
-	// Add query node reranker to be executed at QueryNode level
+	// Add reranker marked for QueryNode execution
 	if t.functionScore != nil && t.request.FunctionScore != nil && len(t.request.FunctionScore.Functions) > 0 {
 		for _, funcSchema := range t.request.FunctionScore.Functions {
 			if rerank.IsQueryNodeRanker(funcSchema) {
@@ -1044,4 +1068,38 @@ func (t *searchTask) OnEnqueue() error {
 	t.Base.MsgType = commonpb.MsgType_Search
 	t.Base.SourceID = paramtable.GetNodeID()
 	return nil
+}
+
+func (t *searchTask) isFunctionScoreEmpty() bool {
+	return t.request == nil || t.request.FunctionScore == nil || len(t.request.FunctionScore.Functions) == 0
+}
+
+// getQNRerankInputIDs computes (and caches) input field IDs required by QueryNode-level rerankers (expr/wasm).
+// It maps FunctionSchema.InputFieldNames to schema FieldIDs once, since the function set is per-request.
+func (t *searchTask) getQNRerankInputIDs() []int64 {
+	if t.qnRerankInputIDsCached {
+		return t.qnRerankInputIDs
+	}
+	if t.isFunctionScoreEmpty() {
+		t.qnRerankInputIDs = nil
+		t.qnRerankInputIDsCached = true
+		return nil
+	}
+	nameToID := make(map[string]int64)
+	for _, fs := range typeutil.GetAllFieldSchemas(t.schema.CollectionSchema) {
+		nameToID[fs.GetName()] = fs.GetFieldID()
+	}
+	ids := typeutil.NewSet[int64]()
+	for _, f := range t.request.FunctionScore.Functions {
+		if rerank.IsQueryNodeRanker(f) {
+			for _, n := range f.GetInputFieldNames() {
+				if id, ok := nameToID[n]; ok {
+					ids.Insert(id)
+				}
+			}
+		}
+	}
+	t.qnRerankInputIDs = ids.Collect()
+	t.qnRerankInputIDsCached = true
+	return t.qnRerankInputIDs
 }

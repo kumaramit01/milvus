@@ -27,7 +27,6 @@ const (
 	ExprNormalizeKey = "normalize"
 )
 
-// toFloat64 converts various numeric types to float64
 func toFloat64(v interface{}) float64 {
 	switch val := v.(type) {
 	case float64:
@@ -46,7 +45,6 @@ func toFloat64(v interface{}) float64 {
 }
 
 // mathFunctions contains all mathematical functions for expr-lang
-// Created once at package level to avoid recreating functions on every call
 var mathFunctions = map[string]interface{}{
 	// Basic math functions with type conversion
 	"abs":   func(x interface{}) float64 { return math.Abs(toFloat64(x)) },
@@ -71,6 +69,20 @@ var mathFunctions = map[string]interface{}{
 	"mod":       func(x, y interface{}) float64 { return math.Mod(toFloat64(x), toFloat64(y)) },
 	"remainder": func(x, y interface{}) float64 { return math.Remainder(toFloat64(x), toFloat64(y)) },
 	"trunc":     func(x interface{}) float64 { return math.Trunc(toFloat64(x)) },
+	"sigmoid":   func(x interface{}) float64 { return 1.0 / (1.0 + math.Exp(-toFloat64(x))) },
+	"relu":      func(x interface{}) float64 { return math.Max(0, toFloat64(x)) },
+	"relu6":     func(x interface{}) float64 { return math.Min(6, math.Max(0, toFloat64(x))) },
+	"elu": func(x interface{}) float64 {
+		return math.Max(0, toFloat64(x)) + math.Min(0, 1.0*(math.Exp(toFloat64(x))-1))
+	},
+	"selu": func(x interface{}) float64 {
+		return 1.0507010259030715*math.Max(0, toFloat64(x)) + 0.40248228514376414*math.Min(0, 1.0507010259030715*(math.Exp(toFloat64(x))-1))
+	},
+	"gelu": func(x interface{}) float64 {
+		return 0.5 * toFloat64(x) * (1 + math.Tanh(math.Sqrt(2/math.Pi)*(toFloat64(x)+0.044715*math.Pow(toFloat64(x), 3))))
+	},
+	"swish": func(x interface{}) float64 { return toFloat64(x) / (1.0 + math.Exp(-toFloat64(x))) },
+	"mish":  func(x interface{}) float64 { return toFloat64(x) * math.Tanh(math.Log(1.0+math.Exp(toFloat64(x)))) },
 
 	// Clamping function with type conversion
 	"clamp": func(x, min_val, max_val interface{}) float64 {
@@ -152,7 +164,7 @@ func newExprRerank(collSchema *schemapb.CollectionSchema, funcSchema *schemapb.F
 	}, nil
 }
 func (e *ExprRerank[T]) processOneSearchData(ctx context.Context, searchParams *SearchParams, cols []*columns, idGroup map[any]any) (*IDScores[T], error) {
-	newScores := map[T]float32{}
+	exprScores := map[T]float32{}
 	idLocations := make(map[T]IDLoc)
 
 	for colIdx, col := range cols {
@@ -164,7 +176,7 @@ func (e *ExprRerank[T]) processOneSearchData(ctx context.Context, searchParams *
 		scores := col.scores
 
 		for idx, id := range ids {
-			if _, exists := newScores[id]; exists {
+			if _, exists := exprScores[id]; exists {
 				continue // Already processed (use first occurrence)
 			}
 
@@ -221,7 +233,6 @@ func (e *ExprRerank[T]) processOneSearchData(ctx context.Context, searchParams *
 				return nil, fmt.Errorf("failed to execute expression for id %v: %w", id, err)
 			}
 
-			// Convert output to float32 (fast path for common types)
 			var newScore float32
 			switch v := output.(type) {
 			case float64:
@@ -236,15 +247,15 @@ func (e *ExprRerank[T]) processOneSearchData(ctx context.Context, searchParams *
 				return nil, fmt.Errorf("expression returned unsupported type %T for id %v", output, id)
 			}
 
-			newScores[id] = newScore
+			exprScores[id] = newScore
 			idLocations[id] = IDLoc{batchIdx: colIdx, offset: idx}
 		}
 	}
 
 	if searchParams.isGrouping() {
-		return newGroupingIDScores(newScores, idLocations, searchParams, idGroup)
+		return newGroupingIDScores(exprScores, idLocations, searchParams, idGroup)
 	}
-	return newIDScores(newScores, idLocations, searchParams, true), nil
+	return newIDScores(exprScores, idLocations, searchParams, true), nil
 }
 
 func (e *ExprRerank[T]) Process(ctx context.Context, searchParams *SearchParams, inputs *rerankInputs) (*rerankOutputs, error) {
@@ -263,9 +274,9 @@ func (e *ExprRerank[T]) Process(ctx context.Context, searchParams *SearchParams,
 
 func parseBool(s string) (bool, error) {
 	switch strings.ToLower(s) {
-	case "true", "1", "yes":
+	case "true", "1", "yes", "y", "on", "t", "1.0":
 		return true, nil
-	case "false", "0", "no":
+	case "false", "0", "no", "n", "off", "f", "0.0":
 		return false, nil
 	default:
 		return false, fmt.Errorf("invalid boolean value: %s", s)
