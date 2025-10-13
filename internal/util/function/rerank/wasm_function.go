@@ -39,8 +39,7 @@ type WasmFunction[T PKType] struct {
 	rerankFunc *wasmtime.Func
 
 	// Preallocated buffers to reduce GC pressure
-	argBuffer   []interface{} // Reusable argument buffer for multi-field calls (fallback)
-	maxArgCount int           // Maximum arguments needed
+	argBuffer []interface{} // Reusable argument buffer for multi-field calls
 
 	// Precomputed field arrays (cast once per rerank call)
 	fieldArrays []interface{} // Cached typed field arrays
@@ -109,9 +108,8 @@ func newWasmFunction(collSchema *schemapb.CollectionSchema, funcSchema *schemapb
 			instance:    instance,
 			store:       store,
 			entryPoint:  entryPoint,
-			rerankFunc:  entryFunc,                    // Cached function pointer
-			argBuffer:   make([]interface{}, maxArgs), // Preallocated argument buffer
-			maxArgCount: maxArgs,
+			rerankFunc:  entryFunc,                      // Cached function pointer
+			argBuffer:   make([]interface{}, maxArgs),   // Preallocated argument buffer
 			fieldArrays: make([]interface{}, maxFields), // Preallocated field arrays
 			scoreMapPool: &sync.Pool{
 				New: func() interface{} { return make(map[int64]float32) },
@@ -126,9 +124,8 @@ func newWasmFunction(collSchema *schemapb.CollectionSchema, funcSchema *schemapb
 			instance:    instance,
 			store:       store,
 			entryPoint:  entryPoint,
-			rerankFunc:  entryFunc,                    // Cached function pointer
-			argBuffer:   make([]interface{}, maxArgs), // Preallocated argument buffer
-			maxArgCount: maxArgs,
+			rerankFunc:  entryFunc,                      // Cached function pointer
+			argBuffer:   make([]interface{}, maxArgs),   // Preallocated argument buffer
 			fieldArrays: make([]interface{}, maxFields), // Preallocated field arrays
 			scoreMapPool: &sync.Pool{
 				New: func() interface{} { return make(map[string]float32) },
@@ -173,13 +170,12 @@ func (wf *WasmFunction[T]) Process(ctx context.Context, searchParams *SearchPara
 	return outputs, nil
 }
 
-// processOneSearchData processes a single search result set with field data support
 func (wf *WasmFunction[T]) processOneSearchData(ctx context.Context, searchParams *SearchParams, cols []*columns, idGroup map[any]any) (*IDScores[T], error) {
 	if len(cols) == 0 {
 		return newIDScores[T](map[T]float32{}, map[T]IDLoc{}, searchParams, true), nil
 	}
 
-	// Use cached WASM function pointer (no lookup needed)
+	// Use cached WASM function pointer
 	rerankFunc := wf.rerankFunc
 
 	col := cols[0]
@@ -189,9 +185,8 @@ func (wf *WasmFunction[T]) processOneSearchData(ctx context.Context, searchParam
 
 	ids := col.ids.([]T)
 	scores := col.scores
-	resultCount := len(ids)
 
-	// Get pooled maps (zero allocations)
+	// Get pooled maps
 	rerankedScores := wf.scoreMapPool.Get().(map[T]float32)
 	idLocations := wf.locMapPool.Get().(map[T]IDLoc)
 
@@ -203,15 +198,10 @@ func (wf *WasmFunction[T]) processOneSearchData(ctx context.Context, searchParam
 		delete(idLocations, k)
 	}
 
-	// Ensure capacity if needed (rare case)
-	if len(rerankedScores) < resultCount {
-		// Maps will grow as needed, but this avoids initial rehashing
-	}
-
 	// Get input field types for field data access
 	inputFieldTypes := wf.GetInputFieldTypes()
 
-	// Fast path: No input fields (most common case) - inline everything
+	// Fast path: No input fields
 	if len(inputFieldTypes) == 0 {
 		// Inline simple rerank calls for maximum performance
 		for j, id := range ids {
@@ -232,7 +222,7 @@ func (wf *WasmFunction[T]) processOneSearchData(ctx context.Context, searchParam
 		}
 	} else {
 		// Complex path: With input fields
-		// Precompute/cast field arrays once per rerank call (major optimization)
+		// Precompute/cast field arrays once per rerank call
 		wf.precomputeFieldArrays(col, inputFieldTypes)
 
 		for j, id := range ids {
@@ -278,7 +268,6 @@ func (wf *WasmFunction[T]) processOneSearchData(ctx context.Context, searchParam
 	return result, err
 }
 
-// Call WASM with multiple fields - fixed f32 return ABI with preallocated buffer
 func (wf *WasmFunction[T]) callWasmWithMultipleFields(
 	rerankFunc *wasmtime.Func,
 	score float32,
@@ -301,37 +290,6 @@ func (wf *WasmFunction[T]) callWasmWithMultipleFields(
 	return result.(float32), nil // Fixed ABI: guaranteed f32
 }
 
-func (wf *WasmFunction[T]) extractFieldValueByIndex(col *columns, docIndex int, fieldType schemapb.DataType, fieldIndex int) interface{} {
-	if fieldIndex >= len(col.data) {
-		return nil
-	}
-
-	switch fieldType {
-	case schemapb.DataType_Int32:
-		if values, ok := col.data[fieldIndex].([]int32); ok && docIndex < len(values) {
-			return values[docIndex]
-		}
-	case schemapb.DataType_Int64:
-		if values, ok := col.data[fieldIndex].([]int64); ok && docIndex < len(values) {
-			return values[docIndex]
-		}
-	case schemapb.DataType_Float:
-		if values, ok := col.data[fieldIndex].([]float32); ok && docIndex < len(values) {
-			return values[docIndex]
-		}
-	case schemapb.DataType_Double:
-		if values, ok := col.data[fieldIndex].([]float64); ok && docIndex < len(values) {
-			return values[docIndex]
-		}
-	case schemapb.DataType_VarChar:
-		if values, ok := col.data[fieldIndex].([]string); ok && docIndex < len(values) {
-			return values[docIndex]
-		}
-	}
-	return nil
-}
-
-// precomputeFieldArrays casts and caches all field arrays once per rerank call
 func (wf *WasmFunction[T]) precomputeFieldArrays(col *columns, fieldTypes []schemapb.DataType) {
 	if len(fieldTypes) == 0 || len(col.data) == 0 {
 		return
@@ -382,7 +340,6 @@ func (wf *WasmFunction[T]) precomputeFieldArrays(col *columns, fieldTypes []sche
 	}
 }
 
-// getPrecomputedFieldValue retrieves field value from precomputed arrays (no casting, minimal checks)
 func (wf *WasmFunction[T]) getPrecomputedFieldValue(docIndex, fieldIndex int) interface{} {
 	// Assume valid indices (caller responsibility) - remove redundant bounds checks
 	arr := wf.fieldArrays[fieldIndex]
