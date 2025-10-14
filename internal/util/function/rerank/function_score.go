@@ -127,29 +127,16 @@ type FunctionScore struct {
 	reranker Reranker
 }
 
+// IsQueryNodeRanker returns true if the reranker should run at QueryNode level
 func IsQueryNodeRanker(funcSchema *schemapb.FunctionSchema) bool {
-	return GetExecutionLevel(funcSchema) == "querynode"
-}
-
-// GetExecutionLevel returns where the reranker should execute based on the execution_level parameter
-// Returns "querynode" or "proxy". If not explicitly set, uses type-based fallback for backward compatibility.
-func GetExecutionLevel(funcSchema *schemapb.FunctionSchema) string {
-	// First check if execution_level is explicitly set (respects API choice)
-	for _, param := range funcSchema.Params {
-		if strings.ToLower(param.Key) == "execution_level" {
-			level := strings.ToLower(param.Value)
-			if level == "querynode" || level == "proxy" {
-				return level
-			}
-		}
-	}
-	// Fallback to type-based logic for backward compatibility with code that doesn't use the API methods
 	rerankerName := GetRerankName(funcSchema)
 	switch rerankerName {
 	case ExprRerankName, WasmName:
-		return "querynode"
+		return true
+	case DecayFunctionName, ModelFunctionName, RRFName, WeightedName:
+		return false
 	default:
-		return "proxy"
+		return false
 	}
 }
 
@@ -193,7 +180,7 @@ func NewFunctionScore(collSchema *schemapb.CollectionSchema, funcScoreSchema *sc
 	funcScore := &FunctionScore{}
 
 	for _, function := range funcScoreSchema.Functions {
-		// Skip rerankers marked for QueryNode execution
+		// Skip expression-based rerankers as they are handled at QueryNode level
 		if IsQueryNodeRanker(function) {
 			continue
 		}

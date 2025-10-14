@@ -15,19 +15,4 @@
 // limitations under the License.
 
 // Package milvusclient implements the official Go Milvus client for v2.
-//
-// # Examples
-//
-// See read_example_test.go for usage examples including:
-//   - Basic search and query operations
-//   - Hybrid search with multiple vectors
-//   - Expression-based reranking (ExampleClient_Search_exprRerank)
-//   - WASM-based reranking (ExampleClient_Search_wasmRerank)
-//
-// Expression-based reranking:
-//   - client/milvusclient/expr_impl/expr_match.go - Full standalone example with test suite
-//
-// WASM-based reranking:
-//   - client/milvusclient/wasm_impl/wasm_rerank.go - Full standalone example with test suite
-//   - tests/reranker_wasm/ - Rust/Python WASM implementations
 package milvusclient

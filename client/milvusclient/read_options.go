@@ -80,8 +80,7 @@ type AnnRequest struct {
 	offset          int
 	templateParams  map[string]any
 
-	functionRerankers   []*entity.Function // default proxy-level rerankers
-	functionQNRerankers []*entity.Function // explicit QueryNode-level rerankers
+	functionRerankers []*entity.Function
 }
 
 func NewAnnRequest(annField string, limit int, vectors ...entity.Vector) *AnnRequest {
@@ -147,30 +146,10 @@ func (r *AnnRequest) searchRequest() (*milvuspb.SearchRequest, error) {
 		request.ExprTemplateValues[key] = tmplVal
 	}
 
-	// Compose rerankers (legacy proxy-level + explicit QueryNode-level) into FunctionScore
-	// The execution level is determined by which API method was used, not by reranker type
-	total := len(r.functionQNRerankers) + len(r.functionRerankers)
-	if total > 0 {
+	if len(r.functionRerankers) > 0 {
 		request.FunctionScore = &schemapb.FunctionScore{}
-		// QueryNode rerankers - add execution_level marker
-		for _, fr := range r.functionQNRerankers {
-			proto := fr.ProtoMessage()
-			// Add execution_level parameter to indicate QueryNode execution
-			proto.Params = append(proto.Params, &commonpb.KeyValuePair{
-				Key:   "execution_level",
-				Value: "querynode",
-			})
-			request.FunctionScore.Functions = append(request.FunctionScore.Functions, proto)
-		}
-		// Proxy rerankers - add execution_level marker
 		for _, fr := range r.functionRerankers {
-			proto := fr.ProtoMessage()
-			// Add execution_level parameter to indicate Proxy execution
-			proto.Params = append(proto.Params, &commonpb.KeyValuePair{
-				Key:   "execution_level",
-				Value: "proxy",
-			})
-			request.FunctionScore.Functions = append(request.FunctionScore.Functions, proto)
+			request.FunctionScore.Functions = append(request.FunctionScore.Functions, fr.ProtoMessage())
 		}
 	}
 
@@ -308,17 +287,7 @@ func (r *AnnRequest) WithIgnoreGrowing(ignoreGrowing bool) *AnnRequest {
 }
 
 func (r *AnnRequest) WithFunctionReranker(fr *entity.Function) *AnnRequest {
-	// Add execution_level parameter to indicate Proxy execution
-	fr.WithParam("execution_level", "proxy")
 	r.functionRerankers = append(r.functionRerankers, fr)
-	return r
-}
-
-// WithQueryNodeReranker explicitly marks a QueryNode-level reranker (expr/wasm)
-func (r *AnnRequest) WithQueryNodeReranker(fr *entity.Function) *AnnRequest {
-	// Add execution_level parameter to indicate QueryNode execution
-	fr.WithParam("execution_level", "querynode")
-	r.functionQNRerankers = append(r.functionQNRerankers, fr)
 	return r
 }
 
@@ -405,12 +374,6 @@ func (opt *searchOption) WithSearchParam(key, value string) *searchOption {
 
 func (opt *searchOption) WithFunctionReranker(fr *entity.Function) *searchOption {
 	opt.annRequest.WithFunctionReranker(fr)
-	return opt
-}
-
-// WithQueryNodeReranker adds a QueryNode-level reranker.
-func (opt *searchOption) WithQueryNodeReranker(fr *entity.Function) *searchOption {
-	opt.annRequest.WithQueryNodeReranker(fr)
 	return opt
 }
 
@@ -559,15 +522,8 @@ func (opt *hybridSearchOption) HybridRequest() (*milvuspb.HybridSearchRequest, e
 
 	if len(opt.functionRerankers) > 0 {
 		r.FunctionScore = &schemapb.FunctionScore{}
-		// Hybrid search rerankers default to Proxy level execution
 		for _, fr := range opt.functionRerankers {
-			proto := fr.ProtoMessage()
-			// Add execution_level parameter to indicate Proxy execution
-			proto.Params = append(proto.Params, &commonpb.KeyValuePair{
-				Key:   "execution_level",
-				Value: "proxy",
-			})
-			r.FunctionScore.Functions = append(r.FunctionScore.Functions, proto)
+			r.FunctionScore.Functions = append(r.FunctionScore.Functions, fr.ProtoMessage())
 		}
 	}
 

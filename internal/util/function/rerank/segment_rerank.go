@@ -22,8 +22,8 @@ func ApplySegmentLevelRerank(
 		return searchResults, nil
 	}
 
-	// Only process rerankers marked for QueryNode execution
-	if GetExecutionLevel(funcSchema) != "querynode" {
+	// Only process expression-based rerankers
+	if !IsQueryNodeRanker(funcSchema) {
 		return searchResults, nil
 	}
 

@@ -28,6 +28,7 @@ import (
 	"github.com/milvus-io/milvus-proto/go-api/v2/commonpb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/milvuspb"
 	"github.com/milvus-io/milvus-proto/go-api/v2/schemapb"
+	"github.com/milvus-io/milvus/internal/util/function/embedding"
 )
 
 func TestFunctionScore(t *testing.T) {
@@ -180,7 +181,10 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq = 1
 	{
 		nq := int64(1)
-		searchData := genSearchResults(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		data := embedding.GenSearchResultData(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		searchData := &milvuspb.SearchResults{
+			Results: data,
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE"}), []*milvuspb.SearchResults{searchData})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -189,7 +193,10 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq=1, input is empty
 	{
 		nq := int64(1)
-		searchData := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		data := embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData := &milvuspb.SearchResults{
+			Results: data,
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE"}), []*milvuspb.SearchResults{searchData})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -198,7 +205,10 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq=3
 	{
 		nq := int64(3)
-		searchData := genSearchResults(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		data := embedding.GenSearchResultData(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		searchData := &milvuspb.SearchResults{
+			Results: data,
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE"}), []*milvuspb.SearchResults{searchData})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -207,7 +217,10 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq=3, all input is empty
 	{
 		nq := int64(3)
-		searchData := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		data := embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData := &milvuspb.SearchResults{
+			Results: data,
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE"}), []*milvuspb.SearchResults{searchData})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -218,9 +231,13 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq = 1
 	{
 		nq := int64(1)
-		searchData1 := genSearchResults(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		searchData1 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 10, schemapb.DataType_Int64, "ts", 102),
+		}
 
-		searchData2 := genSearchResults(nq, 20, schemapb.DataType_Int64, "ts", 102)
+		searchData2 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 20, schemapb.DataType_Int64, "ts", 102),
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE", "COSINE"}), []*milvuspb.SearchResults{searchData1, searchData2})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -229,9 +246,13 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq=1, all input is empty
 	{
 		nq := int64(1)
-		searchData1 := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData1 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102),
+		}
 
-		searchData2 := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData2 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102),
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE", "COSINE"}), []*milvuspb.SearchResults{searchData1, searchData2})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -240,9 +261,13 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq=1, has empty input
 	{
 		nq := int64(1)
-		searchData1 := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData1 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102),
+		}
 
-		searchData2 := genSearchResults(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		searchData2 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 10, schemapb.DataType_Int64, "ts", 102),
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE", "COSINE"}), []*milvuspb.SearchResults{searchData1, searchData2})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -251,9 +276,13 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq = 3
 	{
 		nq := int64(3)
-		searchData1 := genSearchResults(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		searchData1 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 10, schemapb.DataType_Int64, "ts", 102),
+		}
 
-		searchData2 := genSearchResults(nq, 20, schemapb.DataType_Int64, "ts", 102)
+		searchData2 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 20, schemapb.DataType_Int64, "ts", 102),
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE", "COSINE"}), []*milvuspb.SearchResults{searchData1, searchData2})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -262,9 +291,13 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq=3, all input is empty
 	{
 		nq := int64(3)
-		searchData1 := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData1 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102),
+		}
 
-		searchData2 := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData2 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102),
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE", "COSINE"}), []*milvuspb.SearchResults{searchData1, searchData2})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
@@ -273,9 +306,13 @@ func (s *FunctionScoreSuite) TestFunctionScoreProcess() {
 	// nq=3, has empty input
 	{
 		nq := int64(3)
-		searchData1 := genSearchResults(nq, 0, schemapb.DataType_Int64, "ts", 102)
+		searchData1 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 0, schemapb.DataType_Int64, "ts", 102),
+		}
 
-		searchData2 := genSearchResults(nq, 10, schemapb.DataType_Int64, "ts", 102)
+		searchData2 := &milvuspb.SearchResults{
+			Results: embedding.GenSearchResultData(nq, 10, schemapb.DataType_Int64, "ts", 102),
+		}
 		ret, err := f.Process(context.Background(), NewSearchParams(nq, 3, 2, -1, -1, 1, false, "", []string{"COSINE", "COSINE"}), []*milvuspb.SearchResults{searchData1, searchData2})
 		s.NoError(err)
 		s.Equal(int64(3), ret.Results.TopK)
